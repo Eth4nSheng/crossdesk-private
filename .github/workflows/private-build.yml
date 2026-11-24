@@ -65,22 +65,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist"
           build_variant() {
-            local extra=""
-            if [[ "$1" == "host-only" ]]; then extra="--CROSSDESK_HOST_ONLY=y"; fi
+            local extra="" suffix=""
+            if [[ "$1" == "host-only" ]]; then
+              extra="--CROSSDESK_HOST_ONLY=y"
+              suffix="-host-only"
+            fi
             xmake f -c -v --CROSSDESK_VERSION="${VERSION}" --USE_CUDA=false \
               --USE_WAYLAND=true --cc=gcc-10 --cxx=g++-10 ${extra} --root -y
             xmake b -vy --root crossdesk
             ./apps/desktop/scripts/linux/pkg_amd64.sh "${VERSION}"
-            if [[ "$1" == "host-only" ]]; then
-              for file in \
-                "crossdesk-linux-amd64-${VERSION}.deb" \
-                "crossdesk-virtual-desktop-xfce-linux-amd64-${VERSION}.deb"; do
-                if [[ -f "${file}" ]]; then
-                  mv "${file}" "${file%.deb}-host-only.deb"
-                fi
-              done
-            fi
+            for file in \
+              "crossdesk-linux-amd64-${VERSION}.deb" \
+              "crossdesk-virtual-desktop-xfce-linux-amd64-${VERSION}.deb"; do
+              if [[ -f "${file}" ]]; then
+                mv "${file}" "$dist/${file%.deb}${suffix}.deb"
+              fi
+            done
           }
           build_variant normal
           if [[ "${{ inputs.host_only }}" == "true" ]]; then
@@ -91,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: crossdesk-linux-amd64
-          path: "src/*.deb"
+          path: "dist/*.deb"
           if-no-files-found: error
 
   macos-arm64:
@@ -126,18 +129,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist"
           chmod +x ./apps/desktop/scripts/macos/pkg_arm64.sh
           build_variant() {
-            local extra=""
-            if [[ "$1" == "host-only" ]]; then extra="--CROSSDESK_HOST_ONLY=y"; fi
+            local extra="" suffix=""
+            if [[ "$1" == "host-only" ]]; then
+              extra="--CROSSDESK_HOST_ONLY=y"
+              suffix="-host-only"
+            fi
             xmake f -c --target_minver="${MACOSX_DEPLOYMENT_TARGET}" \
               --CROSSDESK_VERSION="${VERSION}" --USE_CUDA=false ${extra} -vyD
             xmake b -vy crossdesk
             ./apps/desktop/scripts/macos/pkg_arm64.sh "${VERSION}"
-            if [[ "$1" == "host-only" ]]; then
-              mv "crossdesk-macos-arm64-${VERSION}.pkg" \
-                 "crossdesk-macos-arm64-${VERSION}-host-only.pkg"
-            fi
+            mv "crossdesk-macos-arm64-${VERSION}.pkg" \
+               "$dist/crossdesk-macos-arm64-${VERSION}${suffix}.pkg"
           }
           build_variant normal
           if [[ "${{ inputs.host_only }}" == "true" ]]; then
@@ -148,7 +154,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: crossdesk-macos-arm64
-          path: "src/crossdesk-macos-arm64-*.pkg"
+          path: "dist/*.pkg"
           if-no-files-found: error
 
   windows-x64:
@@ -184,6 +190,8 @@ jobs:
         working-directory: src
         shell: pwsh
         run: |
+          $dist = "$env:GITHUB_WORKSPACE\dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
           function Build-Variant([string]$suffix, [string]$hostOnly) {
             xmake f -c "--CROSSDESK_VERSION=$env:VERSION" --USE_CUDA=false `
               "--CROSSDESK_HOST_ONLY=$hostOnly" -y
@@ -192,11 +200,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\pkg_x64.ps1" $env:VERSION
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            if ($suffix -ne "") {
-              $source = "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\crossdesk-win-x64-$env:VERSION.exe"
-              $target = "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\crossdesk-win-x64-$env:VERSION-$suffix.exe"
-              Move-Item -Force $source $target
-            }
+            $suffixName = if ($suffix -ne "") { "-$suffix" } else { "" }
+            $source = "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\crossdesk-win-x64-$env:VERSION.exe"
+            $target = "$dist\crossdesk-win-x64-$env:VERSION$suffixName.exe"
+            Move-Item -Force $source $target
           }
           Build-Variant "" "n"
           if ("${{ inputs.host_only }}" -eq "true") {
@@ -207,5 +214,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: crossdesk-windows-x64
-          path: "src/apps/desktop/scripts/windows/crossdesk-win-x64-*.exe"
+          path: "dist/*.exe"
           if-no-files-found: error
