@@ -1,0 +1,211 @@
+name: Private Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      host_only:
+        description: "同时构建被控端专用版（隐藏发起控制入口）"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  VERSION: "1.7.7"
+  UPSTREAM_TAG: "v1.7.7-20261124"
+  PATCH_FILE: "crossdesk-private.patch"
+
+jobs:
+  linux-amd64:
+    name: Linux amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    container:
+      image: crossdesk/ubuntu20.04:buildenv-cuda12.6.3-gcc10-cmake3.31.6-pipewire0.3.48-xmake3.0.9-rust1.92.0
+      options: --user root
+    env:
+      XMAKE_GLOBALDIR: /data
+    steps:
+      - name: Checkout build configuration
+        uses: actions/checkout@v5
+
+      - name: Fetch CrossDesk source and apply private patch
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "${UPSTREAM_TAG}" \
+            https://github.com/kunkundi/crossdesk.git src
+          git -C src apply "$GITHUB_WORKSPACE/${PATCH_FILE}"
+          git -C src submodule update --init --recursive
+
+      - name: Setup Xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: "3.1.1"
+
+      - name: Install Wayland build dependencies
+        working-directory: src
+        shell: bash
+        run: |
+          if pkg-config --exists dbus-1 libdrm fuse fuse3 && \
+             test -f /opt/crossdesk-pipewire-sdk/include/pipewire-0.3/pipewire/pipewire.h && \
+             test -f /opt/crossdesk-pipewire-sdk/include/spa-0.2/spa/param/video/format-utils.h; then
+            exit 0
+          fi
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libdbus-1-dev libdrm-dev libfuse-dev libfuse3-dev
+          rm -rf /var/lib/apt/lists/*
+          install-crossdesk-pipewire-sdk
+          pkg-config --exists dbus-1 libdrm fuse fuse3
+
+      - name: Build and package
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_variant() {
+            local extra=""
+            if [[ "$1" == "host-only" ]]; then extra="--CROSSDESK_HOST_ONLY=y"; fi
+            xmake f -c -v --CROSSDESK_VERSION="${VERSION}" --USE_CUDA=false \
+              --USE_WAYLAND=true --cc=gcc-10 --cxx=g++-10 ${extra} --root -y
+            xmake b -vy --root crossdesk
+            ./apps/desktop/scripts/linux/pkg_amd64.sh "${VERSION}"
+            if [[ "$1" == "host-only" ]]; then
+              for file in \
+                "crossdesk-linux-amd64-${VERSION}.deb" \
+                "crossdesk-virtual-desktop-xfce-linux-amd64-${VERSION}.deb"; do
+                if [[ -f "${file}" ]]; then
+                  mv "${file}" "${file%.deb}-host-only.deb"
+                fi
+              done
+            fi
+          }
+          build_variant normal
+          if [[ "${{ inputs.host_only }}" == "true" ]]; then
+            build_variant host-only
+          fi
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: crossdesk-linux-amd64
+          path: "src/*.deb"
+          if-no-files-found: error
+
+  macos-arm64:
+    name: macOS arm64
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - name: Checkout build configuration
+        uses: actions/checkout@v5
+
+      - name: Fetch CrossDesk source and apply private patch
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "${UPSTREAM_TAG}" \
+            https://github.com/kunkundi/crossdesk.git src
+          git -C src apply "$GITHUB_WORKSPACE/${PATCH_FILE}"
+          git -C src submodule update --init --recursive
+
+      - name: Setup Xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: "3.1.1"
+
+      - name: Update xmake repositories
+        working-directory: src
+        run: xmake repo -u
+
+      - name: Build and package
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./apps/desktop/scripts/macos/pkg_arm64.sh
+          build_variant() {
+            local extra=""
+            if [[ "$1" == "host-only" ]]; then extra="--CROSSDESK_HOST_ONLY=y"; fi
+            xmake f -c --target_minver="${MACOSX_DEPLOYMENT_TARGET}" \
+              --CROSSDESK_VERSION="${VERSION}" --USE_CUDA=false ${extra} -vyD
+            xmake b -vy crossdesk
+            ./apps/desktop/scripts/macos/pkg_arm64.sh "${VERSION}"
+            if [[ "$1" == "host-only" ]]; then
+              mv "crossdesk-macos-arm64-${VERSION}.pkg" \
+                 "crossdesk-macos-arm64-${VERSION}-host-only.pkg"
+            fi
+          }
+          build_variant normal
+          if [[ "${{ inputs.host_only }}" == "true" ]]; then
+            build_variant host-only
+          fi
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v6
+        with:
+          name: crossdesk-macos-arm64
+          path: "src/crossdesk-macos-arm64-*.pkg"
+          if-no-files-found: error
+
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      XMAKE_GLOBALDIR: D:\xmake_global
+    steps:
+      - name: Checkout build configuration
+        uses: actions/checkout@v5
+
+      - name: Fetch CrossDesk source and apply private patch
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "${UPSTREAM_TAG}" \
+            https://github.com/kunkundi/crossdesk.git src
+          git -C src apply "$GITHUB_WORKSPACE/${PATCH_FILE}"
+          git -C src submodule update --init --recursive
+
+      - name: Setup Xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: "3.1.1"
+
+      - name: Copy nsProcess plugin to NSIS folder
+        shell: pwsh
+        run: |
+          $nsisPluginDir = "C:\Program Files (x86)\NSIS\Plugins\x86-unicode"
+          Copy-Item "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\nsProcess.dll" $nsisPluginDir -Force
+
+      - name: Build and package
+        working-directory: src
+        shell: pwsh
+        run: |
+          function Build-Variant([string]$suffix, [string]$hostOnly) {
+            xmake f -c "--CROSSDESK_VERSION=$env:VERSION" --USE_CUDA=false `
+              "--CROSSDESK_HOST_ONLY=$hostOnly" -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            xmake b -vy crossdesk
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\pkg_x64.ps1" $env:VERSION
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($suffix -ne "") {
+              $source = "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\crossdesk-win-x64-$env:VERSION.exe"
+              $target = "$env:GITHUB_WORKSPACE\src\apps\desktop\scripts\windows\crossdesk-win-x64-$env:VERSION-$suffix.exe"
+              Move-Item -Force $source $target
+            }
+          }
+          Build-Variant "" "n"
+          if ("${{ inputs.host_only }}" -eq "true") {
+            Build-Variant "host-only" "y"
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: crossdesk-windows-x64
+          path: "src/apps/desktop/scripts/windows/crossdesk-win-x64-*.exe"
+          if-no-files-found: error
