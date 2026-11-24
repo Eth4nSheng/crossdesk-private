@@ -529,22 +529,10 @@ index 0000000..27c69ee
 +
 +#endif  // _CUSTOM_BUILD_H_
 diff --git a/apps/desktop/src/gui/application/gui_application.cpp b/apps/desktop/src/gui/application/gui_application.cpp
-index 2633975..b0ce62c 100644
+index 2633975..8f48ec0 100644
 --- a/apps/desktop/src/gui/application/gui_application.cpp
 +++ b/apps/desktop/src/gui/application/gui_application.cpp
-@@ -1150,6 +1150,11 @@ struct GuiApplication::SlintUi {
-   // native window independent. Only the wall instance ever uses gallery mode.
-   slint::ComponentHandle<ui::MainWindow> main = ui::MainWindow::create();
-   slint::ComponentHandle<ui::MainWindow> wall = ui::MainWindow::create();
-+#if defined(CROSSDESK_HOST_ONLY) && CROSSDESK_HOST_ONLY
-+  // Apply before the first frame so the connect controls never appear.
-+  main->set_host_only(true);
-+  wall->set_host_only(true);
-+#endif
-   auto& Window(bool gallery) { return gallery ? wall : main; }
-   std::shared_ptr<slint::VectorModel<ui::ReleaseNoteBlock>>
-       release_note_blocks_model =
-@@ -1747,6 +1752,10 @@ void GuiApplication::ResetSettingsUi(bool gallery_window) {
+@@ -1747,6 +1747,10 @@ void GuiApplication::ResetSettingsUi(bool gallery_window) {
  #endif
    main->set_server_host(signal_server_ip_self_);
    main->set_server_port(signal_server_port_self_);
@@ -555,7 +543,7 @@ index 2633975..b0ce62c 100644
    main->set_self_host_settings_error("");
    main->set_gallery_resolution_index(ui_->gallery.stream_settings.resolution);
    main->set_gallery_frame_rate_index(ui_->gallery.stream_settings.FrameRateIndex());
-@@ -5229,6 +5238,10 @@ void GuiApplication::ApplySettingsFromConfig(bool reconnect) {
+@@ -5229,6 +5233,10 @@ void GuiApplication::ApplySettingsFromConfig(bool reconnect) {
  }
  
  void GuiApplication::ConnectFromUi(const std::string& input) {
